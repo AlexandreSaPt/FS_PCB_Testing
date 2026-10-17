@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teensy Controls</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg:#f5f6f8; --card:#fff; --fg:#1c2025; --muted:#6b7280; --line:#d9dde3;
+    --accent:#3b6df0; --accent-fg:#fff; --ok:#1a9d5a; --bad:#d64545;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14161a; --card:#1e2126; --fg:#e8eaed; --muted:#9aa1ab; --line:#33383f;
+            --accent:#6b93ff; --accent-fg:#101318; --ok:#3ccf85; --bad:#ff6b6b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  main { max-width:1100px; margin:0 auto; padding:16px; }
+  h1 { font-size:18px; margin:0; }
+  .top { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:16px; }
+  .top .sp { flex:1; }
+  button, select, input { font:inherit; color:inherit; }
+  button { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:6px 12px; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.primary, button[aria-pressed="true"].switch, button.push.down { background:var(--accent); color:var(--accent-fg); border-color:var(--accent); }
+  input, select { background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:5px 8px; }
+  .pill { padding:3px 10px; border-radius:99px; border:1px solid var(--line); font-size:13px; color:var(--muted); }
+  #portSel { max-width:280px; }
+  .pill::before { content:"●"; margin-right:6px; color:var(--bad); }
+  .pill.on::before { color:var(--ok); }
+  #grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; display:flex; flex-direction:column; gap:10px; }
+  .card header { display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }
+  .label { font-weight:600; }
+  code { color:var(--muted); font-size:12px; }
+  .tools { display:none; gap:4px; }
+  .editing .tools { display:flex; }
+  .tools button { padding:2px 7px; font-size:12px; }
+  .row { display:flex; align-items:center; gap:10px; }
+  input[type=range] { flex:1; accent-color:var(--accent); padding:0; }
+  input.val { width:90px; text-align:right; }
+  .range-lbl { display:flex; justify-content:space-between; font-size:12px; color:var(--muted); margin-top:-6px; }
+  .switch, .push { width:100%; padding:10px; font-weight:600; touch-action:none; user-select:none; }
+  .empty, #last { color:var(--muted); }
+  .editing-only { display:none; }
+  .editing .editing-only { display:inline-block; }
+  dialog { background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:12px; padding:18px; width:min(420px,92vw); }
+  dialog::backdrop { background:rgba(0,0,0,.45); }
+  form.f { display:grid; grid-template-columns:130px 1fr; gap:8px 10px; align-items:center; }
+  form.f menu { grid-column:1/-1; display:flex; justify-content:flex-end; gap:8px; padding:0; margin:8px 0 0; }
+  .hint { grid-column:1/-1; font-size:12px; color:var(--muted); margin:0; }
+  .hidden { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <h1>Teensy Controls</h1>
+    <select id="portSel" title="Serial port"></select>
+    <button id="refreshPorts" title="Rescan serial ports">⟳</button>
+    <span id="status" class="pill">disconnected</span>
+    <span class="sp"></span>
+    <button id="addBtn" class="editing-only primary">+ Add control</button>
+    <button id="sendAll" title="Send the current value of every slider, number and toggle">Send all</button>
+    <button id="editBtn" aria-pressed="false">Edit layout</button>
+  </div>
+  <div id="grid"></div>
+  <p id="last">Nothing sent yet.</p>
+</main>
+
+<dialog id="dlg">
+  <form method="dialog" class="f" id="frm">
+    <label for="f_type">Type</label>
+    <select id="f_type">
+      <option value="slider">Slider</option>
+      <option value="number">Number input</option>
+      <option value="toggle">Toggle switch</option>
+      <option value="button">Button</option>
+    </select>
+    <label for="f_label">Display label</label>
+    <input id="f_label" placeholder="e.g. Target RPM">
+    <label for="f_name">Signal name</label>
+    <input id="f_name" required maxlength="24" pattern="[A-Za-z0-9_./\-]{1,24}" placeholder="e.g. target_rpm">
+    <label for="f_min" id="l_min">Min</label>
+    <input id="f_min" type="number" step="any" required>
+    <label for="f_max" id="l_max">Max</label>
+    <input id="f_max" type="number" step="any" required>
+    <label for="f_step" id="l_step">Step</label>
+    <input id="f_step" type="number" step="any" min="0" value="1">
+    <label for="f_mode" id="l_mode">Behavior</label>
+    <select id="f_mode">
+      <option value="pulse">Pulse (send max on click)</option>
+      <option value="momentary">Momentary (max on press, min on release)</option>
+    </select>
+    <p class="hint">Signal name: up to 24 characters (letters, digits, _ . / -). It must match the name used in <code>fg.bind()</code> / <code>fg.subscribe()</code> on the Teensy.</p>
+    <menu>
+      <button value="cancel" formnovalidate>Cancel</button>
+      <button value="ok" class="primary">Save</button>
+    </menu>
+  </form>
+</dialog>
+
+<script>
+const $ = s => document.querySelector(s);
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const decimals = step => (String(step).split(".")[1] || "").length;
+const uid = () => Math.random().toString(36).slice(2, 9);
+
+function h(tag, props = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "class") e.className = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (v !== false && v != null) e.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat()) if (kid != null) e.append(kid);
+  return e;
+}
+
+let layout = { controls: [] };
+let editMode = false;
+
+// ---------------------------------------------------------------- sending
+let chain = Promise.resolve();  // keeps messages in order (e.g. press, then release)
+function send(name, value) {
+  chain = chain.then(async () => {
+    try {
+      const r = await fetch("/api/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, value }),
+      });
+      const j = await r.json();
+      setLast(j.ok ? `Sent ${name} = ${value}` : `Failed (${name}): ${j.error || r.status}`, j.ok);
+    } catch {
+      setLast("Server unreachable", false);
+    }
+  });
+}
+const pending = {};
+function sendThrottled(name, value, ms = 40) {  // at most ~25 msgs/s per signal; last value always goes out
+  const p = pending[name] ??= { t: 0, timer: null };
+  p.v = value;
+  clearTimeout(p.timer);
+  p.timer = setTimeout(() => { p.t = performance.now(); send(name, p.v); },
+                       Math.max(0, ms - (performance.now() - p.t)));
+}
+function setLast(msg, ok) {
+  const el = $("#last");
+  el.textContent = msg;
+  el.style.color = ok ? "" : "var(--bad)";
+}
+
+// ---------------------------------------------------------------- layout persistence
+let saveTimer;
+function changed() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => fetch("/api/layout", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(layout),
+  }).catch(() => setLast("Could not save layout", false)), 400);
+}
+
+// ---------------------------------------------------------------- rendering
+function render() {
+  document.body.classList.toggle("editing", editMode);
+  $("#editBtn").setAttribute("aria-pressed", editMode);
+  $("#editBtn").textContent = editMode ? "Done" : "Edit layout";
+  const grid = $("#grid");
+  grid.replaceChildren();
+  if (!layout.controls.length)
+    grid.append(h("p", { class: "empty" }, "No controls yet. Click “Edit layout”, then “Add control”."));
+  layout.controls.forEach((c, i) => grid.append(card(c, i)));
+}
+
+function move(i, d) {
+  const j = i + d, a = layout.controls;
+  if (j < 0 || j >= a.length) return;
+  [a[i], a[j]] = [a[j], a[i]];
+  changed(); render();
+}
+
+function card(c, i) {
+  const tools = h("div", { class: "tools" },
+    h("button", { title: "Move earlier", onclick: () => move(i, -1) }, "◀"),
+    h("button", { title: "Move later", onclick: () => move(i, 1) }, "▶"),
+    h("button", { title: "Edit", onclick: () => openDialog(c) }, "✎"),
+    h("button", { title: "Delete", onclick: () => { layout.controls.splice(i, 1); changed(); render(); } }, "✕"));
+  return h("section", { class: "card" },
+    h("header", {}, h("div", {}, h("div", { class: "label" }, c.label || c.name), h("code", {}, "→ " + c.name)), tools),
+    body(c));
+}
+
+function body(c) {
+  const d = decimals(c.step ?? 1);
+  if (c.type === "slider") {
+    const num = h("input", { type: "number", class: "val", min: c.min, max: c.max, step: c.step, value: c.value });
+    const rng = h("input", { type: "range", min: c.min, max: c.max, step: c.step, value: c.value });
+    rng.addEventListener("input", () => {
+      c.value = +rng.value; num.value = c.value.toFixed(d);
+      sendThrottled(c.name, c.value); changed();
+    });
+    num.addEventListener("change", () => {
+      const v = +num.value;
+      if (Number.isNaN(v)) { num.value = c.value; return; }
+      c.value = clamp(v, c.min, c.max); rng.value = c.value; num.value = c.value.toFixed(d);
+      send(c.name, c.value); changed();
+    });
+    num.value = (+c.value).toFixed(d);
+    return [h("div", { class: "row" }, rng, num),
+            h("div", { class: "range-lbl" }, h("span", {}, c.min), h("span", {}, c.max))];
+  }
+  if (c.type === "number") {
+    const num = h("input", { type: "number", class: "val", style: "flex:1;width:auto", min: c.min, max: c.max, step: c.step, value: c.value });
+    const go = () => {
+      const v = +num.value;
+      if (Number.isNaN(v)) return;
+      c.value = clamp(v, c.min, c.max); num.value = c.value;
+      send(c.name, c.value); changed();
+    };
+    num.addEventListener("change", go);
+    return h("div", { class: "row" }, num, h("button", { onclick: go }, "Send"));
+  }
+  if (c.type === "toggle") {
+    const on = () => c.value === c.max;
+    const b = h("button", { class: "switch", "aria-pressed": on() }, on() ? "ON" : "OFF");
+    b.addEventListener("click", () => {
+      c.value = on() ? c.min : c.max;
+      b.setAttribute("aria-pressed", on()); b.textContent = on() ? "ON" : "OFF";
+      send(c.name, c.value); changed();
+    });
+    return b;
+  }
+  // button
+  const b = h("button", { class: "push" }, c.mode === "momentary" ? "Hold" : "Press");
+  if (c.mode === "momentary") {
+    b.addEventListener("pointerdown", e => { b.setPointerCapture(e.pointerId); b.classList.add("down"); send(c.name, c.max); });
+    const up = () => { if (b.classList.contains("down")) { b.classList.remove("down"); send(c.name, c.min); } };
+    b.addEventListener("pointerup", up);
+    b.addEventListener("pointercancel", up);
+  } else {
+    b.addEventListener("click", () => send(c.name, c.max));
+  }
+  return b;
+}
+
+// ---------------------------------------------------------------- add / edit dialog
+let editing = null;
+const F = id => $("#f_" + id);
+
+function syncDialogFields() {
+  const t = F("type").value;
+  const isBtnToggle = t === "toggle" || t === "button";
+  $("#l_min").textContent = isBtnToggle ? "Min / off value" : "Min";
+  $("#l_max").textContent = isBtnToggle ? "Max / on value" : "Max";
+  for (const id of ["step"]) { F(id).classList.toggle("hidden", isBtnToggle); $("#l_" + id).classList.toggle("hidden", isBtnToggle); }
+  F("mode").classList.toggle("hidden", t !== "button");
+  $("#l_mode").classList.toggle("hidden", t !== "button");
+}
+
+function openDialog(c = null) {
+  editing = c;
+  const d = c || { type: "slider", label: "", name: "", min: 0, max: 100, step: 1, mode: "pulse" };
+  F("type").value = d.type; F("label").value = d.label || ""; F("name").value = d.name;
+  F("min").value = d.min; F("max").value = d.max; F("step").value = d.step ?? 1; F("mode").value = d.mode || "pulse";
+  syncDialogFields();
+  $("#dlg").showModal();
+}
+
+F("type").addEventListener("change", () => {
+  const t = F("type").value;
+  if (t === "toggle" || t === "button") { F("min").value = 0; F("max").value = 1; }
+  syncDialogFields();
+});
+
+$("#frm").addEventListener("submit", e => {
+  if (e.submitter?.value !== "ok") return;
+  const min = +F("min").value, max = +F("max").value;
+  const t = F("type").value, step = +F("step").value || 1;
+  if (!(min < max)) { e.preventDefault(); alert("Min must be smaller than max."); return; }
+  const c = editing || { id: uid() };
+  Object.assign(c, {
+    type: t, label: F("label").value.trim(), name: F("name").value.trim(),
+    min, max, step: (t === "toggle" || t === "button") ? 1 : step, mode: F("mode").value,
+  });
+  c.value = t === "toggle" ? (c.value === max ? max : min) : clamp(+c.value || min, min, max);
+  if (!editing) layout.controls.push(c);
+  changed(); render();
+});
+
+$("#addBtn").addEventListener("click", () => openDialog());
+$("#editBtn").addEventListener("click", () => { editMode = !editMode; render(); });
+$("#sendAll").addEventListener("click", () => {
+  for (const c of layout.controls) if (c.type !== "button") send(c.name, c.value);
+});
+
+// ---------------------------------------------------------------- status polling + startup
+const sel = $("#portSel");
+let lastPorts = [], requested = null, portsKey = "";
+
+function renderPorts() {
+  const key = JSON.stringify(lastPorts) + "|" + requested;
+  if (key !== portsKey) {  // only rebuild when something changed (keeps an open menu stable)
+    portsKey = key;
+    sel.replaceChildren(h("option", { value: "" }, "— no port —"));
+    const seen = new Set();
+    for (const p of lastPorts) {
+      seen.add(p.device);
+      sel.append(h("option", { value: p.device }, p.description ? `${p.device} — ${p.description}` : p.device));
+    }
+    if (requested && !seen.has(requested)) sel.append(h("option", { value: requested }, `${requested} (not found)`));
+  }
+  if (sel.value !== (requested || "")) sel.value = requested || "";
+}
+
+async function refreshPorts() {
+  try { lastPorts = await (await fetch("/api/ports")).json(); renderPorts(); } catch {}
+}
+
+sel.addEventListener("change", async () => {
+  requested = sel.value || null;
+  try {
+    const r = await fetch("/api/port", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ port: requested }),
+    });
+    const j = await r.json();
+    setLast(j.ok ? (requested ? `Connecting to ${requested}…` : "Disconnected") : `Port error: ${j.error}`, j.ok);
+  } catch {
+    setLast("Server unreachable", false);
+  }
+  pollStatus();
+});
+$("#refreshPorts").addEventListener("click", refreshPorts);
+
+async function pollStatus() {
+  const el = $("#status");
+  try {
+    const s = await (await fetch("/api/status")).json();
+    requested = s.requested || null;
+    renderPorts();
+    el.classList.toggle("on", s.connected);
+    el.title = s.error || "";
+    el.textContent = s.connected ? "connected"
+                   : s.requested ? (s.error ? "can’t open port, retrying…" : "connecting…")
+                   : "no port selected";
+  } catch {
+    el.classList.remove("on");
+    el.textContent = "bridge unreachable";
+  }
+}
+
+(async () => {
+  try { layout = await (await fetch("/api/layout")).json(); } catch {}
+  layout.controls = (layout.controls || []).map(c => ({ id: uid(), step: 1, value: c.min ?? 0, ...c }));
+  render();
+  await refreshPorts();
+  pollStatus();
+  setInterval(pollStatus, 1000);
+  setInterval(refreshPorts, 3000);
+})();
+</script>
+</body>
+</html>
