@@ -1,0 +1,12 @@
+{
+  "controls": [
+    {"id": "o1", "type": "toggle", "label": "Shutdown Signal (pin 2)", "name": "shutdown_signal", "min": 0, "max": 1, "step": 1, "value": 0},
+    {"id": "o2", "type": "toggle", "label": "D0 (pin 3)", "name": "d0", "min": 0, "max": 1, "step": 1, "value": 0},
+    {"id": "o3", "type": "toggle", "label": "D3 (pin 4)", "name": "d3", "min": 0, "max": 1, "step": 1, "value": 0},
+    {"id": "o4", "type": "toggle", "label": "D2 (pin 5)", "name": "d2", "min": 0, "max": 1, "step": 1, "value": 0},
+    {"id": "o5", "type": "toggle", "label": "D1 (pin 6)", "name": "d1", "min": 0, "max": 1, "step": 1, "value": 0},
+    {"id": "o6", "type": "toggle", "label": "Race Key LED (pin 7)", "name": "race_key_led", "min": 0, "max": 1, "step": 1, "value": 0},
+    {"id": "o7", "type": "toggle", "label": "EBS 1 (pin 8)", "name": "ebs_1", "min": 0, "max": 1, "step": 1, "value": 0},
+    {"id": "o8", "type": "toggle", "label": "EBS 2 (pin 9)", "name": "ebs_2", "min": 0, "max": 1, "step": 1, "value": 0}
+  ]
+}

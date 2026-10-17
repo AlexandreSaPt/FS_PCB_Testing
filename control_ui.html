@@ -27,6 +27,10 @@
   input, select { background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:5px 8px; }
   .pill { padding:3px 10px; border-radius:99px; border:1px solid var(--line); font-size:13px; color:var(--muted); }
   #portSel { max-width:280px; }
+  #layoutSel { min-width:170px; max-width:300px; }
+  button:disabled { opacity:.45; cursor:default; border-color:var(--line); }
+  .dirty { color:var(--bad); font-size:13px; }
+  .top.bar2 { padding-bottom:12px; border-bottom:1px solid var(--line); }
   .pill::before { content:"●"; margin-right:6px; color:var(--bad); }
   .pill.on::before { color:var(--ok); }
   #grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:12px; }
@@ -61,9 +65,19 @@
     <button id="refreshPorts" title="Rescan serial ports">⟳</button>
     <span id="status" class="pill">disconnected</span>
     <span class="sp"></span>
+    <button id="sendAll" title="Send the current value of every slider, number and toggle to the MCU">Send all</button>
+  </div>
+  <div class="top bar2">
+    <label for="layoutSel">Preset</label>
+    <select id="layoutSel" title="Choose a saved UI preset"></select>
+    <span id="dirty" class="dirty hidden">● unsaved changes</span>
+    <button id="newBtn" title="Create a new, empty preset">New</button>
+    <button id="saveBtn" class="primary" title="Save the current preset (Ctrl+S)">Save</button>
+    <button id="saveAsBtn" title="Save a copy under a new name">Save as…</button>
+    <button id="deleteBtn" title="Delete this preset">Delete</button>
+    <span class="sp"></span>
     <button id="addBtn" class="editing-only primary">+ Add control</button>
-    <button id="sendAll" title="Send the current value of every slider, number and toggle">Send all</button>
-    <button id="editBtn" aria-pressed="false">Edit layout</button>
+    <button id="editBtn" aria-pressed="false">Edit controls</button>
   </div>
   <div id="grid"></div>
   <p id="last">Nothing sent yet.</p>
@@ -96,7 +110,7 @@
     <p class="hint">Signal name: up to 24 characters (letters, digits, _ . / -). It must match the name used in <code>fg.bind()</code> / <code>fg.subscribe()</code> on the Teensy.</p>
     <menu>
       <button value="cancel" formnovalidate>Cancel</button>
-      <button value="ok" class="primary">Save</button>
+      <button value="ok" class="primary">Apply</button>
     </menu>
   </form>
 </dialog>
@@ -152,26 +166,131 @@ function setLast(msg, ok) {
   el.style.color = ok ? "" : "var(--bad)";
 }
 
-// ---------------------------------------------------------------- layout persistence
-let saveTimer;
-function changed() {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => fetch("/api/layout", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(layout),
-  }).catch(() => setLast("Could not save layout", false)), 400);
+// ---------------------------------------------------------------- presets (layouts folder)
+let presets = [], current = null, dirty = false;
+
+async function api(method, path, body) {
+  try {
+    const r = await fetch(path, {
+      method,
+      headers: body !== undefined ? { "Content-Type": "application/json" } : {},
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    let data = {};
+    try { data = await r.json(); } catch {}
+    return { ok: r.ok, status: r.status, data };
+  } catch {
+    return { ok: false, status: 0, data: { error: "server unreachable" } };
+  }
 }
+const enc = encodeURIComponent;
+const normalize = l => ({ controls: (l.controls || []).map(c => ({ id: uid(), step: 1, value: c.min ?? 0, ...c })) });
+
+function markDirty() { dirty = true; renderPresetBar(); }
+
+function renderPresetBar() {
+  const sel = $("#layoutSel");
+  sel.replaceChildren();
+  if (!current) sel.append(h("option", { value: "" }, presets.length ? "(unsaved layout)" : "— no presets —"));
+  for (const p of presets) sel.append(h("option", { value: p.name }, p.name));
+  if (current && !presets.some(p => p.name === current)) sel.append(h("option", { value: current }, current));
+  sel.value = current || "";
+  $("#dirty").classList.toggle("hidden", !dirty);
+  $("#deleteBtn").disabled = !current;
+}
+
+async function refreshPresets() {
+  const r = await api("GET", "/api/layouts");
+  if (r.ok) presets = r.data.layouts || [];
+  renderPresetBar();
+  return r.ok ? r.data.active : null;
+}
+
+const confirmDiscard = () => !dirty || confirm("This preset has unsaved changes. Discard them?");
+
+async function loadPreset(name) {
+  const r = await api("GET", `/api/layouts/${enc(name)}`);
+  if (!r.ok) { setLast(`Could not load “${name}”: ${r.data.error || r.status}`, false); renderPresetBar(); return false; }
+  layout = normalize(r.data); current = name; dirty = false;
+  api("POST", "/api/active", { name });
+  render(); renderPresetBar();
+  setLast(`Loaded preset “${name}”. Values were not sent to the MCU - use “Send all” if you want that.`, true);
+  return true;
+}
+
+async function afterSave(r, name) {
+  if (!r.ok) { setLast(`Save failed: ${r.data.error || r.status}`, false); return false; }
+  current = name; dirty = false;
+  api("POST", "/api/active", { name });
+  await refreshPresets();
+  setLast(`Saved preset “${name}”.`, true);
+  return true;
+}
+
+const putPreset = (name, isNew) =>
+  api("POST", `/api/layouts/${enc(name)}${isNew ? "?new=1" : ""}`, layout);
+
+async function savePreset() {
+  if (!current) return saveAs();
+  await afterSave(await putPreset(current, false), current);
+}
+
+async function saveAs() {
+  const name = (prompt("Save as (new preset name):", current ? current + " copy" : "") || "").trim();
+  if (!name) return;
+  let r = await putPreset(name, true);
+  if (r.status === 409) {
+    if (!confirm(`A preset named “${name}” already exists. Overwrite it?`)) return;
+    r = await putPreset(name, false);
+  }
+  if (r.status === 400) alert(r.data.error);
+  await afterSave(r, name);
+}
+
+async function newPreset() {
+  if (!confirmDiscard()) return;
+  const name = (prompt("Name of the new (empty) preset:") || "").trim();
+  if (!name) return;
+  const r = await api("POST", `/api/layouts/${enc(name)}?new=1`, { controls: [] });
+  if (!r.ok) { alert(r.data.error || "could not create preset"); return; }
+  await refreshPresets();
+  if (await loadPreset(name)) { editMode = true; render(); setLast(`Created preset “${name}”. Add controls, then press Save.`, true); }
+}
+
+async function deletePreset() {
+  if (!current || !confirm(`Delete preset “${current}”? This cannot be undone.`)) return;
+  const gone = current;
+  const r = await api("DELETE", `/api/layouts/${enc(gone)}`);
+  if (!r.ok) { setLast(`Delete failed: ${r.data.error || r.status}`, false); return; }
+  current = null; dirty = false; layout = { controls: [] };
+  await refreshPresets();
+  if (presets.length) await loadPreset(presets[0].name); else { render(); renderPresetBar(); }
+  setLast(`Deleted preset “${gone}”.`, true);
+}
+
+$("#layoutSel").addEventListener("change", async e => {
+  const name = e.target.value;
+  if (!name || !confirmDiscard()) { renderPresetBar(); return; }  // revert the dropdown if cancelled
+  await loadPreset(name);
+});
+$("#newBtn").addEventListener("click", newPreset);
+$("#saveBtn").addEventListener("click", savePreset);
+$("#saveAsBtn").addEventListener("click", saveAs);
+$("#deleteBtn").addEventListener("click", deletePreset);
+document.addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); savePreset(); }
+});
+window.addEventListener("beforeunload", e => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
 
 // ---------------------------------------------------------------- rendering
 function render() {
   document.body.classList.toggle("editing", editMode);
   $("#editBtn").setAttribute("aria-pressed", editMode);
-  $("#editBtn").textContent = editMode ? "Done" : "Edit layout";
+  $("#editBtn").textContent = editMode ? "Done" : "Edit controls";
   const grid = $("#grid");
   grid.replaceChildren();
   if (!layout.controls.length)
-    grid.append(h("p", { class: "empty" }, "No controls yet. Click “Edit layout”, then “Add control”."));
+    grid.append(h("p", { class: "empty" }, "No controls yet. Click “Edit controls”, then “Add control” (or pick a preset above)."));
   layout.controls.forEach((c, i) => grid.append(card(c, i)));
 }
 
@@ -179,7 +298,7 @@ function move(i, d) {
   const j = i + d, a = layout.controls;
   if (j < 0 || j >= a.length) return;
   [a[i], a[j]] = [a[j], a[i]];
-  changed(); render();
+  markDirty(); render();
 }
 
 function card(c, i) {
@@ -187,7 +306,7 @@ function card(c, i) {
     h("button", { title: "Move earlier", onclick: () => move(i, -1) }, "◀"),
     h("button", { title: "Move later", onclick: () => move(i, 1) }, "▶"),
     h("button", { title: "Edit", onclick: () => openDialog(c) }, "✎"),
-    h("button", { title: "Delete", onclick: () => { layout.controls.splice(i, 1); changed(); render(); } }, "✕"));
+    h("button", { title: "Delete", onclick: () => { layout.controls.splice(i, 1); markDirty(); render(); } }, "✕"));
   return h("section", { class: "card" },
     h("header", {}, h("div", {}, h("div", { class: "label" }, c.label || c.name), h("code", {}, "→ " + c.name)), tools),
     body(c));
@@ -200,13 +319,13 @@ function body(c) {
     const rng = h("input", { type: "range", min: c.min, max: c.max, step: c.step, value: c.value });
     rng.addEventListener("input", () => {
       c.value = +rng.value; num.value = c.value.toFixed(d);
-      sendThrottled(c.name, c.value); changed();
+      sendThrottled(c.name, c.value);
     });
     num.addEventListener("change", () => {
       const v = +num.value;
       if (Number.isNaN(v)) { num.value = c.value; return; }
       c.value = clamp(v, c.min, c.max); rng.value = c.value; num.value = c.value.toFixed(d);
-      send(c.name, c.value); changed();
+      send(c.name, c.value);
     });
     num.value = (+c.value).toFixed(d);
     return [h("div", { class: "row" }, rng, num),
@@ -218,7 +337,7 @@ function body(c) {
       const v = +num.value;
       if (Number.isNaN(v)) return;
       c.value = clamp(v, c.min, c.max); num.value = c.value;
-      send(c.name, c.value); changed();
+      send(c.name, c.value);
     };
     num.addEventListener("change", go);
     return h("div", { class: "row" }, num, h("button", { onclick: go }, "Send"));
@@ -229,7 +348,7 @@ function body(c) {
     b.addEventListener("click", () => {
       c.value = on() ? c.min : c.max;
       b.setAttribute("aria-pressed", on()); b.textContent = on() ? "ON" : "OFF";
-      send(c.name, c.value); changed();
+      send(c.name, c.value);
     });
     return b;
   }
@@ -287,7 +406,7 @@ $("#frm").addEventListener("submit", e => {
   });
   c.value = t === "toggle" ? (c.value === max ? max : min) : clamp(+c.value || min, min, max);
   if (!editing) layout.controls.push(c);
-  changed(); render();
+  markDirty(); render();
 });
 
 $("#addBtn").addEventListener("click", () => openDialog());
@@ -354,9 +473,9 @@ async function pollStatus() {
 }
 
 (async () => {
-  try { layout = await (await fetch("/api/layout")).json(); } catch {}
-  layout.controls = (layout.controls || []).map(c => ({ id: uid(), step: 1, value: c.min ?? 0, ...c }));
-  render();
+  const active = await refreshPresets();
+  const first = presets.some(p => p.name === active) ? active : presets[0]?.name;
+  if (first) await loadPreset(first); else { render(); renderPresetBar(); }
   await refreshPorts();
   pollStatus();
   setInterval(pollStatus, 1000);

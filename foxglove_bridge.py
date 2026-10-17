@@ -11,6 +11,7 @@ Usage:
 
 Then in Foxglove: Open connection -> Foxglove WebSocket -> ws://localhost:8765
 Control UI (sliders, buttons, ... that send signals to the MCU): http://localhost:8080
+UI presets are .json files in the ./layouts folder; pick, create and save them from the UI.
 """
 
 import argparse
@@ -20,6 +21,7 @@ import struct
 import sys
 import threading
 import time
+from pathlib import Path
 
 import serial
 import serial.tools.list_ports
@@ -334,7 +336,10 @@ def parse_args():
     ap.add_argument("--ui-host", default="127.0.0.1",
                     help="control UI bind address (default 127.0.0.1; 0.0.0.0 exposes it to your network!)")
     ap.add_argument("--no-ui", action="store_true", help="don't start the control UI")
-    ap.add_argument("--layout", help="control UI layout file (default: ui_layout.json next to this script)")
+    ap.add_argument("--layouts-dir", default=str(Path(__file__).resolve().parent / "layouts"),
+                    help="folder with the control UI presets, one .json file each (default: ./layouts)")
+    ap.add_argument("--layout", metavar="NAME",
+                    help="preset to open at startup, e.g. teensy40 (default: the one used last time)")
     ap.add_argument("--record", metavar="FILE.mcap", help="also record everything to an MCAP file")
     ap.add_argument("-v", "--verbose", action="store_true", help="print dropped/invalid frames")
     return ap.parse_args()
@@ -363,9 +368,12 @@ def main():
     ui = None
     if not args.no_ui:
         try:
-            ui = ControlServer(link, args.ui_host, args.ui_port, args.layout)
+            ui = ControlServer(link, args.ui_host, args.ui_port, args.layouts_dir, args.layout)
             ui.start()
             print(f"[info] Control UI: http://{args.ui_host}:{args.ui_port}")
+            print(f"[info] Presets: {ui.store.dir} ({len(ui.store.list())} found)")
+            if args.layout and ui.store.active is None:
+                print(f"[warn] Preset '{args.layout}' not found in {ui.store.dir}")
         except OSError as e:
             print(f"[warn] Could not start control UI ({e}); continuing without it")
 

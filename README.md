@@ -1,57 +1,40 @@
-# FS_PCB_Testing
+# Rack — a local dashboard for your home server apps
 
-This is a util created to facilitate the testing of a microcontroller unit. It allows for a user and operator to read the data from the MCU and to send data, which can be used to actuate pins on the MCU but also as a general way of inputing data.
+A tiny, self-contained web app that gives you one page to launch all your
+self-hosted services (Jellyfin, Navidrome, and whatever else you run).
 
-This repo is composed of 2 parts: a C++ class which has a publish-subscriber topology. It interacts with a Python script that does the bridge between the MCU and the data visualization software, Foxglove.
+No build step, no dependencies, no backend — just three files.
 
-To run this, you need to install all of the required dependences, required to communicate with foxglove and the MCU via the serial port.
+## Running it
 
-```
-pip install -r requirements.txt
-```
+Any of these work:
 
-To run the python code:
-```
-python ./foxglove_bridge.py
-```
+**Just open the file**
+Double-click `index.html`, or open it in your browser via `file://`.
 
-# How to use
+**Or serve it (recommended, avoids some browser file:// quirks)**
+```bash
+cd homelab-gallery
+python3 -m http.server 8000
+```
+Then visit `http://localhost:8000`.
 
-## Outgoing Topics
-We need to declare the data topics at the beginning of the loop
-```
-// ---- Outgoing topics: declare once, publish every loop. Names show up as "/imu.ax" etc. in Foxglove
-FoxgloveDebug::Topic& imu = fg.topic("/imu")
-                                .addFloat("ax")
-                                .addFloat("ay")
-                                .addFloat("az");
-```
-Then, every time we want to send data to Foxglove, we need to publish it with
-```
-// Publish: one value per declared field, in the declared order.
-imu.publish(ax, ay, az);
-```
+## How it works
 
+- **Add a service** — click "Add service", give it a name and URL.
+- **Default thumbnail** — if you don't provide one, it uses the site's own
+  favicon (fetched via Google's favicon service, so it always loads even if
+  the target server itself can't be reached from a plain `<img>` tag).
+- **Custom thumbnail** — drag an image file onto the drop zone in the
+  add/edit panel (or click it to browse). You can also drag an image
+  straight onto an existing card on the grid to swap its thumbnail without
+  opening the edit panel.
+- **Click a card** — opens that service in a new tab.
+- **Edit / remove** — hover a card and click the pencil icon in the corner.
 
-## Incomming Topics
-For incomming signals, we need to bind them in case of a slider or subscribe to them, in case of a btn
-```
-// Incoming signals. Names must match the "signal name" of the control in the UI.
-fg.bind("kp", kp);                    // variable kept in sync automatically
-fg.bind("target_rpm", targetRpm);
-fg.bind("enable", motorEnabled);
-fg.subscribe("reset", onReset);       // or run a function
+## Data
 
-```
-
-## Setup and loop
-To setup this, we need to first run:
-
-```
-fg.begin(Serial);      // use e.g. Serial1 (after Serial1.begin(921600)) for a hardware UART
-```
-
-And for eahc loop, we need:
-```
-fg.update();  // process signals coming from the UI (callbacks run here)
-```
+Everything (your list of apps, names, URLs, and any custom thumbnails) is
+stored in your browser's `localStorage`, under the key `rack.apps.v1`.
+Nothing is sent anywhere — this is a purely local, offline app. If you
+switch browsers or clear site data, the list resets.
