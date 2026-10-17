@@ -1,0 +1,8 @@
+{
+  "controls": [
+    {"id": "o1", "type": "toggle", "label": "Teensy WD or BMS Err (pin 8)", "name": "teensy_wd_or_bms_err", "min": 0, "max": 1, "step": 1, "value": 0},
+    {"id": "o2", "type": "toggle", "label": "LED Blue (pin 38)", "name": "led_blue", "min": 0, "max": 1, "step": 1, "value": 0},
+    {"id": "o3", "type": "toggle", "label": "LED Red (pin 37)", "name": "led_red", "min": 0, "max": 1, "step": 1, "value": 0},
+    {"id": "o4", "type": "toggle", "label": "LED Green (pin 36)", "name": "led_green", "min": 0, "max": 1, "step": 1, "value": 0}
+  ]
+}
